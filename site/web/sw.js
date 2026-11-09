@@ -1,5 +1,5 @@
 /* Change SHELL_VERSION when changing the application shell. Material caches survive updates. */
-const SHELL_VERSION = 'fast-start-20261109';
+const SHELL_VERSION = '53352be003';
 const BASE = new URL('./', self.location);
 const ROOT = new URL('../', BASE);
 const PREFIX = 'nsu-app-' + BASE.pathname + '-';
