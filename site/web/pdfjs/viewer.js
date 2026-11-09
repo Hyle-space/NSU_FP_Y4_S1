@@ -246,7 +246,7 @@ function resolvePdfUrl(path,lfs=params.get('lfs')==='1'){
   return url.href;
 }
 async function loadPdfDocument(url){
-  const options={disableRange:false,disableStream:true,disableAutoFetch:true,rangeChunkSize:262144,
+  const options={disableRange:false,disableStream:true,disableAutoFetch:true,rangeChunkSize:1048576,
     cMapUrl:PDFJS_BASE+'cmaps/',cMapPacked:true,
     standardFontDataUrl:PDFJS_BASE+'standard_fonts/'};
   const task=pdfjsLib.getDocument({url,...options});
