@@ -1,12 +1,12 @@
 /* Change SHELL_VERSION when changing the application shell. Material caches survive updates. */
-const SHELL_VERSION = '53352be003';
+const SHELL_VERSION = 'fast-start-20261109';
 const BASE = new URL('./', self.location);
 const ROOT = new URL('../', BASE);
 const PREFIX = 'nsu-app-' + BASE.pathname + '-';
 const SHELL = PREFIX + 'shell-' + SHELL_VERSION;
 const DATA = PREFIX + 'data-v1';
 const PDFS = PREFIX + 'pdf-v1';
-const HTML_WAIT = 4000;
+const HTML_WAIT = 350, ASSET_WAIT = 350;
 const CORE = ['index.html', 'site.css?v=ce4cd70474', 'site.js?v=04f9b3d6d8', 'app.js?v=ecfa34c436', 'app.css?v=9aaafa299d', 'annotations-store.js?v=67333490cd', 'offline-resources.json', 'knowledge.css?v=a679564c38', 'manifest.webmanifest?v=78bf5d5133',
   'Overseer/overseer.js?v=c6c82cab8a', 'Overseer/overseer.css?v=3c70ee01aa',
   'Overseer/assets/Circle20.png', 'Overseer/assets/GuidancePebbles.png',
@@ -107,12 +107,8 @@ async function resource(request, event) {
     return response;
   })();
 
-  // HTML chooses the versioned JS/CSS. On a slow mobile network, never serve
-  // an old HTML shell merely because 1.8 seconds elapsed. Cache is offline-only,
-  // but "offline" is not always a quick error: with Wi-Fi off a VPN or virtual
-  // adapter keeps the system online and the request hangs on DNS for a long time,
-  // so the copy answers at once when the browser knows it is offline and after
-  // HTML_WAIT ms otherwise; the request goes on and refreshes the copy.
+  // On repeat visits, favor a prompt cached shell when Pages is slow.
+  // Continue fetching updated HTML and metadata in the background.
   if(html){
     if(cached){
       event.waitUntil(network.catch(()=>{}));
@@ -127,7 +123,7 @@ async function resource(request, event) {
   }
 
   event.waitUntil(network.catch(()=>{}));
-  if(cached) return Promise.race([network.catch(()=>cached),new Promise(resolve=>setTimeout(()=>resolve(cached),1800))]);
+  if(cached) return Promise.race([network.catch(()=>cached),new Promise(resolve=>setTimeout(()=>resolve(cached),ASSET_WAIT))]);
   try { return await network; }
   catch { return Response.error(); }
 }
