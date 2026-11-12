@@ -15,7 +15,7 @@ import shutil
 import tempfile
 import threading
 import unittest
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import pymupdf
 from playwright.sync_api import sync_playwright
@@ -183,6 +183,24 @@ class SiteTests(unittest.TestCase):
         from urllib.parse import urlencode
         self.page.goto(self.base+'pdfjs/viewer.html?'+urlencode({'file':self.a})+extra)
         self.page.wait_for_function("document.querySelector('#total').textContent==='/ 2' && !document.querySelector('#loading').classList.contains('show')")
+
+    def test_mobile_qm_pdf_citation_without_subject_can_change_tone(self):
+        path='База/КМ/Исходники/qm1_lecture06.pdf'
+        self.context.route('**/'+quote(path),lambda route:
+            route.fulfill(path=str(self.root/self.a),content_type='application/pdf'))
+        self.page.set_viewport_size({'width':375,'height':780})
+        self.page.goto(self.base+'pdfjs/viewer.html?'+urlencode({'file':path,'page':1}))
+        self.page.wait_for_function("document.querySelector('#total').textContent==='/ 2'")
+        self.page.locator('#toolsToggle').click()
+        tone=self.page.get_by_role('group',name='Цветовой режим PDF')
+        self.assertTrue(tone.is_visible())
+        original=tone.get_by_role('button',name='Оригинальные цвета')
+        original.click()
+        self.assertEqual(original.get_attribute('aria-pressed'),'true')
+        black=tone.get_by_role('button',name='Чёрный режим')
+        black.click()
+        self.assertEqual(black.get_attribute('aria-pressed'),'true')
+        self.assertTrue(self.page.locator('body').evaluate("(el)=>el.classList.contains('pdf-tone-black')"))
 
     def search(self, query):
         self.page.evaluate('(q)=>runSearch(q)',query)
