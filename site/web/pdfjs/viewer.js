@@ -89,7 +89,9 @@ function isLiteraturePdf(path){
   if(!path)return false;
   return path.split('/').some(part=>/литерат/i.test(part));
 }
-const toneEligible=subject==='КМ'||subject==='ДЛ'||isLiteraturePdf(raw)||(raw||'').split('/')[0]==='ДЛ';
+const toneSubjects=new Set(['КМ','ДЛ']);
+const toneEligible=toneSubjects.has(subject)||isLiteraturePdf(raw)||
+  raw.split('/').slice(0,-1).some(folder=>toneSubjects.has(folder));
 toneSwitch.hidden=!toneEligible;
 
 function toneStorageKey(){return 'nsu-pdf-tone-v2:'+(raw||'default')}
