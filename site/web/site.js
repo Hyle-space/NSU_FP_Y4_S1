@@ -869,7 +869,129 @@ function renderSubjectLinks(){
   $$('.tab').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.selected=null;state.selectedEntry=null;renderSubject()});
   void loadSubjectLinks();
 }
-function renderSubject(){
+const READING_FORMAT_KEY='nsu.fp.reading-format';
+let readingFormat='pdf', htmlReaderIndex, mathJaxLoader, courseMathWork=Promise.resolve();
+try{if(localStorage.getItem(READING_FORMAT_KEY)==='html')readingFormat='html'}catch{}
+
+function setReadingFormat(format){
+  readingFormat=format==='html'?'html':'pdf';
+  try{localStorage.setItem(READING_FORMAT_KEY,readingFormat)}catch{}
+  if(state.view==='subjects')renderSubject();
+}
+function loadHtmlReaderIndex(){
+  if(!htmlReaderIndex){
+    htmlReaderIndex=fetch('course-html/manifest.json').then(response=>{
+      if(!response.ok)throw new Error('HTML index '+response.status);
+      return response.json();
+    }).catch(error=>{htmlReaderIndex=null;throw error});
+  }
+  return htmlReaderIndex;
+}
+function loadCourseMath(){
+  if(!mathJaxLoader){
+    mathJaxLoader=new Promise((resolve,reject)=>{
+      window.MathJax={
+        loader:{load:['[tex]/ams','[tex]/boldsymbol','[tex]/physics','[tex]/braket']},
+        tex:{packages:{'[+]':['ams','boldsymbol','physics','braket']},macros:{bm:['\\boldsymbol{#1}',1]}},
+        startup:{typeset:false}
+      };
+      const script=document.createElement('script');
+      script.src='https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js';
+      script.onload=()=>window.MathJax.startup.promise.then(()=>resolve(window.MathJax),reject);
+      script.onerror=()=>{script.remove();reject(new Error('MathJax'))};
+      document.head.append(script);
+    }).catch(error=>{mathJaxLoader=null;throw error});
+  }
+  return mathJaxLoader;
+}
+function courseHtmlPanel(file,entry){
+  const pdf=file?'<a class="app-manager-btn" href="'+esc(viewerUrl(file,entry.page||0,entry.title))+'">Открыть PDF</a>':'';
+  return '<section class="panel course-html-panel"><div class="course-html-head"><h2>'+esc(entry.title)+'</h2>'+pdf+'</div>'+
+    '<div class="course-html-status" role="status">Загружаю HTML…</div><article class="course-html-text" hidden></article></section>';
+}
+async function mountCourseHtml(panel,entry,anchor=''){
+  const status=panel.querySelector('.course-html-status'), article=panel.querySelector('article');
+  try{
+    const manifest=await loadHtmlReaderIndex();
+    if(!panel.isConnected)return;
+    const path=manifest[entry.id]?.path;
+    if(!path){status.textContent='Для этого материала доступен PDF.';return}
+    const url=new URL('course-html/'+path,location.href);
+    const response=await fetch(url);
+    if(!response.ok)throw new Error('HTML material '+response.status);
+    const html=await response.text();
+    if(!panel.isConnected)return;
+    // Fragments are built from the repository’s course sources with Pandoc.
+    const fragment=document.createElement('template');
+    fragment.innerHTML=html;
+    const content=fragment.content;
+    for(const image of content.querySelectorAll('img[src]')){
+      image.src=new URL(image.getAttribute('src'),url).href;
+      image.loading='lazy';
+      image.decoding='async';
+    }
+    const firstHeading=content.firstElementChild;
+    if(firstHeading?.tagName==='H1'&&!firstHeading.id.includes(':')&&
+        firstHeading.textContent.trim().replace(/\s+/g,' ')===entry.title){
+      firstHeading.remove();
+    }
+    article.append(content);
+    const headings=[...article.querySelectorAll('h1,h2,h3,h4')];
+    if(headings.length){
+      const outline=document.createElement('details');
+      outline.className='course-html-toc';
+      const summary=document.createElement('summary');
+      summary.textContent='Оглавление';
+      const list=document.createElement('ul');
+      headings.forEach(node=>{
+        const item=document.createElement('li'), button=document.createElement('button');
+        item.dataset.level=node.tagName.slice(1);
+        button.type='button';
+        button.textContent=node.textContent.trim();
+        button.onclick=()=>{outline.open=false;node.scrollIntoView({block:'start'})};
+        item.append(button);
+        list.append(item);
+      });
+      outline.append(summary,list);
+      panel.insertBefore(outline,article);
+    }
+    const anchors=new Map([...article.querySelectorAll('[id]')].map(node=>[node.id,node]));
+    const group=structuredGroup(state.subject,state.section);
+    for(const link of article.querySelectorAll('a[data-reference]')){
+      const label=link.dataset.reference;
+      const localTarget=anchors.get(label);
+      const destination=group?.items.find(item=>Object.prototype.hasOwnProperty.call(manifest[item.id]?.labels||{},label));
+      const caption=localTarget?.dataset.equation?'('+localTarget.dataset.equation+')':manifest[destination?.id]?.labels?.[label];
+      if(caption)link.textContent=caption;
+      if(localTarget||destination)link.onclick=event=>{
+        event.preventDefault();
+        if(localTarget){localTarget.scrollIntoView({block:'start'});return}
+        state.selectedEntry=destination;
+        renderSubject(label);
+      };
+      else link.removeAttribute('href');
+    }
+    article.hidden=false;
+    status.hidden=true;
+    if(article.querySelector('.math')){
+      const math=await loadCourseMath();
+      const typeset=courseMathWork.then(async()=>{
+        if(!article.isConnected)return;
+        await math.typesetPromise([article]);
+        if(!article.isConnected)math.typesetClear([article]);
+      });
+      courseMathWork=typeset.catch(()=>{});
+      await typeset;
+    }
+    if(anchor&&article.isConnected)anchors.get(anchor)?.scrollIntoView({block:'start'});
+  }catch(error){
+    if(!panel.isConnected)return;
+    console.warn('[course HTML]',error);
+    status.hidden=false;
+    status.textContent=article.hidden?'HTML не загрузился. Можно открыть PDF.':'Формулы не отрисовались. Можно открыть PDF.';
+  }
+}
+function renderSubject(htmlAnchor){
   if(state.subject==='База'){
     const selected=state.selected;state.selected=null;state.selectedEntry=null;
     renderKnowledge();
@@ -902,26 +1024,37 @@ function renderSubject(){
     listHtml=fileRows(files);
   }
 
+  const htmlEntry=readingFormat==='html'&&state.selectedEntry?.source?.includes('/LaTeX/parts/')?state.selectedEntry:null;
+  const workspace=main.querySelector('.workspace');
+  const reuseWorkspace=workspace&&workspace.classList.contains('html-workspace')===Boolean(htmlEntry);
+  const previousHtml=main.querySelector('.course-html-panel article');
+  if(previousHtml)window.MathJax?.typesetClear?.([previousHtml]);
   const listTitleHtml=esc(listTitle)+' <span class="panel-count">'+count+'</span>';
-  if(main.querySelector('.workspace')){
+  if(reuseWorkspace){
     main.querySelector('.hero').outerHTML=hero(state.subject);
     main.querySelector('#subjectTabs').innerHTML=tabs(state.subject);
     main.querySelector('.list-panel .panel-title').innerHTML=listTitleHtml;
     main.querySelector('.list-panel .file-list').innerHTML=listHtml;
-    patchPreviewHtml(main.querySelector('.preview-panel'),preview(previewFile,state.selectedEntry));
+    if(htmlEntry)workspace.querySelector('.course-html-panel').outerHTML=courseHtmlPanel(previewFile,htmlEntry);
+    else patchPreviewHtml(main.querySelector('.preview-panel'),preview(previewFile,state.selectedEntry));
   }else main.innerHTML=hero(state.subject)+
     '<div id="subjectTabs">'+tabs(state.subject)+'</div>'+
-    '<div class="workspace"><div class="subject-list-col"><section class="panel list-panel"><div class="panel-head"><h2 class="panel-title">'+esc(listTitle)+' <span class="panel-count">'+count+'</span></h2><select id="sortSelect" class="sort-select"><option value="date">По порядку</option><option value="name">По названию</option></select></div><div class="file-list">'+listHtml+'</div></section></div><div class="workspace-resizer" role="separator" aria-orientation="vertical" title="Потяните, чтобы изменить ширину списка"></div>'+preview(previewFile,state.selectedEntry)+'</div>';
+    '<div class="workspace'+(htmlEntry?' html-workspace':'')+'"><div class="subject-list-col"><section class="panel list-panel"><div class="panel-head"><h2 class="panel-title">'+esc(listTitle)+' <span class="panel-count">'+count+'</span></h2><select id="sortSelect" class="sort-select"><option value="date">По порядку</option><option value="name">По названию</option></select></div><div class="file-list">'+listHtml+'</div></section></div>'+(htmlEntry?courseHtmlPanel(previewFile,htmlEntry):'<div class="workspace-resizer" role="separator" aria-orientation="vertical" title="Потяните, чтобы изменить ширину списка"></div>'+preview(previewFile,state.selectedEntry))+'</div>';
 
   syncSubjectHash();
-  bindPreviewTabs();
-  bindWorkspaceResizer();
-  bindPreviewHeight();
+  if(htmlEntry)void mountCourseHtml(main.querySelector('.course-html-panel'),htmlEntry,htmlAnchor);
+  else{bindPreviewTabs();bindWorkspaceResizer();bindPreviewHeight();}
   const sort=$('#sortSelect');if(sort){sort.value=state.sort;sort.onchange=()=>{state.sort=sort.value;renderSubject()}}
   $$('.tab').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.selected=null;state.selectedEntry=null;renderSubject()});
   $$('.file-row[data-entry]').forEach(r=>r.onclick=()=>{
     const item=(group?.items||[]).find(i=>i.id===r.dataset.entry);if(!item)return;
     state.selectedEntry=item;
+    if(readingFormat==='html'&&item.source?.includes('/LaTeX/parts/')){
+      recordOpenedFile(previewFile);
+      renderSubject();
+      main.querySelector('.course-html-panel')?.scrollIntoView({block:'start'});
+      return;
+    }
     if(isPhoneLayout()&&previewFile?.ext==='.pdf'){openPdfFullscreen(viewerUrl(previewFile,item.page||0,item.title),item.title);return}
     recordOpenedFile(previewFile);
     renderSubject();

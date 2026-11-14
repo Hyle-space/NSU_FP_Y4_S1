@@ -277,6 +277,15 @@
     panel.classList.add('app-manager');
     const body=document.createElement('div');body.className='app-manager-body';panel.append(body);
 
+    if(typeof setReadingFormat==='function'){
+      const reading=document.createElement('section');reading.className='app-manager-section';
+      reading.innerHTML='<label class="app-reading-format"><strong>Формат чтения</strong><select class="sort-select" aria-label="Формат чтения"><option value="pdf">PDF</option><option value="html">HTML</option></select></label>';
+      const select=reading.querySelector('select');
+      select.value=readingFormat;
+      select.onchange=()=>setReadingFormat(select.value);
+      body.append(reading);
+    }
+
     const summary=document.createElement('div');summary.className='app-manager-summary';
     const storageLabel=document.createElement('strong');storageLabel.textContent='Данные на устройстве';
     const storage=document.createElement('span');storage.className='app-manager-storage';storage.textContent='Считаю…';
@@ -453,14 +462,14 @@
       }
     };
     const baseRenderSubject=renderSubject;
-    renderSubject=function(){
+    renderSubject=function(htmlAnchor){
       const subject=state.subject;
       if(subject!=='База'&&!linkState.has(subject))void probe(subject).then(found=>{if(found&&state.view==='subjects'&&state.subject===subject)renderSubject()});
       if(state.section==='Ссылки'){
         if(linkState.get(subject)===true){renderSubjectLinks();return}
         if(linkState.has(subject))state.section='';
       }
-      return baseRenderSubject();
+      return baseRenderSubject(htmlAnchor);
     };
     if(state.view==='subjects'&&state.subject!=='База'){
       const subject=state.subject;void probe(subject).then(found=>{if(found&&state.view==='subjects'&&state.subject===subject)renderSubject()});

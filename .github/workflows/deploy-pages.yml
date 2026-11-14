@@ -39,7 +39,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install HTML reader build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc poppler-utils fonts-dejavu-core fonts-lmodern texlive-xetex texlive-pictures texlive-science texlive-latex-extra
       - run: python site/scripts/assemble_pages.py _site
+      - run: python site/scripts/build_html_reader.py _site/docs/course-html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
