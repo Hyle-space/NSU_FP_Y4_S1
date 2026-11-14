@@ -862,11 +862,12 @@ async function loadSubjectLinks(){
   }
 }
 function renderSubjectLinks(){
+  stopCourseReader();
   main.innerHTML=hero(state.subject)+
     '<div id="subjectTabs">'+tabs(state.subject)+'</div>'+
     '<section class="panel links-panel"><div id="subjectLinksContent" class="links-content"><div class="links-loading">Загружаю ссылки…</div></div></section>';
   syncSubjectHash();
-  $$('.tab').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.selected=null;state.selectedEntry=null;renderSubject()});
+  bindSubjectTabs();
   void loadSubjectLinks();
 }
 const READING_FORMAT_KEY='nsu.fp.reading-format';
@@ -880,7 +881,7 @@ function setReadingFormat(format){
 }
 function loadHtmlReaderIndex(){
   if(!htmlReaderIndex){
-    htmlReaderIndex=fetch('course-html/manifest.json').then(response=>{
+    htmlReaderIndex=fetch('course-html/manifest.json',{cache:'no-cache'}).then(response=>{
       if(!response.ok)throw new Error('HTML index '+response.status);
       return response.json();
     }).catch(error=>{htmlReaderIndex=null;throw error});
@@ -904,24 +905,33 @@ function loadCourseMath(){
   }
   return mathJaxLoader;
 }
-function courseHtmlPanel(file,entry){
-  const pdf=file?'<a class="app-manager-btn" href="'+esc(viewerUrl(file,entry.page||0,entry.title))+'">Открыть PDF</a>':'';
-  return '<section class="panel course-html-panel"><div class="course-html-head"><h2>'+esc(entry.title)+'</h2>'+pdf+'</div>'+
-    '<div class="course-html-status" role="status">Загружаю HTML…</div><article class="course-html-text" hidden></article></section>';
+let activeCourseReader;
+function stopCourseReader(){
+  if(!activeCourseReader)return;
+  const {root,controller,observer}=activeCourseReader;
+  activeCourseReader=null;
+  controller.abort();
+  observer?.disconnect();
+  window.MathJax?.typesetClear?.([...root.querySelectorAll('article')]);
 }
-async function mountCourseHtml(panel,entry,anchor=''){
+function courseHtmlPanel(file,entry,index,kind){
+  const pdf=file?'<a href="'+esc(viewerUrl(file,entry.page||0,entry.title))+'">PDF</a>':'';
+  const number=entry.number_label||String(entry.number||index+1).padStart(2,'0');
+  return '<section class="course-chapter" aria-labelledby="course-chapter-'+index+'"><header class="course-chapter-head">'+
+    '<div class="course-chapter-meta"><span>'+kind+' '+esc(number)+'</span>'+pdf+'</div>'+
+    '<h2 id="course-chapter-'+index+'">'+esc(entry.title)+'</h2></header>'+
+    '<div class="course-html-status" role="status">Загружаю…</div><article class="course-html-text" hidden></article></section>';
+}
+async function mountCourseHtml(reader,panel,entry,index,manifest,chapterIndex){
   const status=panel.querySelector('.course-html-status'), article=panel.querySelector('article');
   try{
-    const manifest=await loadHtmlReaderIndex();
-    if(!panel.isConnected)return;
     const path=manifest[entry.id]?.path;
-    if(!path){status.textContent='Для этого материала доступен PDF.';return}
+    if(!path){status.textContent='Для этого материала доступен PDF.';return;}
     const url=new URL('course-html/'+path,location.href);
-    const response=await fetch(url);
+    const response=await fetch(url,{signal:reader.controller.signal});
     if(!response.ok)throw new Error('HTML material '+response.status);
     const html=await response.text();
-    if(!panel.isConnected)return;
-    // Fragments are built from the repository’s course sources with Pandoc.
+    if(reader.controller.signal.aborted)return;
     const fragment=document.createElement('template');
     fragment.innerHTML=html;
     const content=fragment.content;
@@ -935,15 +945,35 @@ async function mountCourseHtml(panel,entry,anchor=''){
         firstHeading.textContent.trim().replace(/\s+/g,' ')===entry.title){
       firstHeading.remove();
     }
+    const anchors=new Map();
+    for(const node of content.querySelectorAll('[id]:not(svg [id])')){
+      anchors.set(node.id,node);
+      node.id='course-'+index+'-'+node.id;
+    }
+    for(const link of content.querySelectorAll('a[href^="#"]')){
+      const label=link.dataset.reference||decodeURIComponent(link.getAttribute('href').slice(1));
+      const localTarget=anchors.get(label);
+      const destination=chapterIndex.get(label);
+      const caption=localTarget?.dataset.equation?'('+localTarget.dataset.equation+')':destination?.caption;
+      if(caption)link.textContent=caption;
+      if(localTarget||destination){
+        link.href='#'+(localTarget?.id||'course-'+destination.index+'-'+label);
+        link.onclick=async event=>{
+          event.preventDefault();
+          await reader.loaded;
+          if(reader.controller.signal.aborted)return;
+          const target=localTarget||document.getElementById('course-'+destination.index+'-'+label);
+          target?.scrollIntoView({block:'start'});
+        };
+      }else link.removeAttribute('href');
+    }
     article.append(content);
     const headings=[...article.querySelectorAll('h1,h2,h3,h4')];
     if(headings.length){
-      const outline=document.createElement('details');
-      outline.className='course-html-toc';
-      const summary=document.createElement('summary');
-      summary.textContent='Оглавление';
-      const list=document.createElement('ul');
-      headings.forEach(node=>{
+      const outline=document.createElement('details'), summary=document.createElement('summary'), list=document.createElement('ul');
+      outline.className='course-html-toc course-chapter-toc';
+      summary.textContent='В этой главе';
+      for(const node of headings){
         const item=document.createElement('li'), button=document.createElement('button');
         item.dataset.level=node.tagName.slice(1);
         button.type='button';
@@ -951,48 +981,98 @@ async function mountCourseHtml(panel,entry,anchor=''){
         button.onclick=()=>{outline.open=false;node.scrollIntoView({block:'start'})};
         item.append(button);
         list.append(item);
-      });
+      }
       outline.append(summary,list);
       panel.insertBefore(outline,article);
-    }
-    const anchors=new Map([...article.querySelectorAll('[id]')].map(node=>[node.id,node]));
-    const group=structuredGroup(state.subject,state.section);
-    for(const link of article.querySelectorAll('a[data-reference]')){
-      const label=link.dataset.reference;
-      const localTarget=anchors.get(label);
-      const destination=group?.items.find(item=>Object.prototype.hasOwnProperty.call(manifest[item.id]?.labels||{},label));
-      const caption=localTarget?.dataset.equation?'('+localTarget.dataset.equation+')':manifest[destination?.id]?.labels?.[label];
-      if(caption)link.textContent=caption;
-      if(localTarget||destination)link.onclick=event=>{
-        event.preventDefault();
-        if(localTarget){localTarget.scrollIntoView({block:'start'});return}
-        state.selectedEntry=destination;
-        renderSubject(label);
-      };
-      else link.removeAttribute('href');
     }
     article.hidden=false;
     status.hidden=true;
     if(article.querySelector('.math')){
-      const math=await loadCourseMath();
-      const typeset=courseMathWork.then(async()=>{
-        if(!article.isConnected)return;
-        await math.typesetPromise([article]);
-        if(!article.isConnected)math.typesetClear([article]);
-      });
-      courseMathWork=typeset.catch(()=>{});
-      await typeset;
+      if(reader.observer)reader.observer.observe(article);
+      else typesetCourseChapter(reader,article);
     }
-    if(anchor&&article.isConnected)anchors.get(anchor)?.scrollIntoView({block:'start'});
   }catch(error){
-    if(!panel.isConnected)return;
+    if(reader.controller.signal.aborted)return;
     console.warn('[course HTML]',error);
-    status.hidden=false;
-    status.textContent=article.hidden?'HTML не загрузился. Можно открыть PDF.':'Формулы не отрисовались. Можно открыть PDF.';
+    status.textContent='HTML не загрузился. Можно открыть PDF.';
   }
 }
-function renderSubject(htmlAnchor){
+function typesetCourseChapter(reader,article){
+  // Render each chapter when it is approached. MathJax operations must be serialized.
+  courseMathWork=courseMathWork.then(async()=>{
+    if(reader.controller.signal.aborted)return;
+    const math=await loadCourseMath();
+    if(reader.controller.signal.aborted)return;
+    await math.typesetPromise([article]);
+    if(reader.controller.signal.aborted)math.typesetClear([article]);
+  }).catch(error=>{
+    if(reader.controller.signal.aborted)return;
+    console.warn('[course math]',error);
+    const status=article.parentElement.querySelector('.course-html-status');
+    status.hidden=false;
+    status.textContent='Формулы не отрисовались. Можно открыть PDF.';
+  });
+}
+function renderCourseReader(group,items){
+  const subject=state.subject, section=state.section;
+  const existing=activeCourseReader?.root;
+  if(existing?.isConnected&&existing.dataset.subject===subject&&existing.dataset.section===section)return;
+  stopCourseReader();
+  const file=fileByPath(group.pdf_path), kind=section==='Семинары'?'Семинар':'Лекция';
+  const chapters=items.map((entry,index)=>courseHtmlPanel(file,entry,index,kind)).join('');
+  const contents=items.map((entry,index)=>'<li><button type="button" data-chapter="'+index+'">'+esc(entry.title)+'</button></li>').join('');
+  main.innerHTML=hero(subject)+'<div id="subjectTabs">'+tabs(subject)+'</div>'+
+    '<div class="course-reader"><details class="course-html-toc course-reader-toc"><summary>Оглавление '+(section==='Семинары'?'семинаров':'лекций')+'</summary><ol>'+contents+'</ol></details>'+chapters+'</div>';
+  const root=main.querySelector('.course-reader');
+  root.dataset.subject=subject;
+  root.dataset.section=section;
+  const reader={root,controller:new AbortController()};
+  activeCourseReader=reader;
+  if('IntersectionObserver' in window){
+    reader.observer=new IntersectionObserver(entries=>{
+      for(const target of entries.filter(item=>item.isIntersecting).map(item=>item.target)){
+        reader.observer.unobserve(target);
+        typesetCourseChapter(reader,target);
+      }
+    },{rootMargin:'700px 0px'});
+  }
+  const panels=[...root.querySelectorAll('.course-chapter')];
+  const outline=root.querySelector('.course-reader-toc');
+  outline.onclick=async event=>{
+    const button=event.target.closest('button[data-chapter]');
+    if(!button)return;
+    outline.open=false;
+    await reader.loaded;
+    if(!reader.controller.signal.aborted)panels[Number(button.dataset.chapter)]?.scrollIntoView({block:'start'});
+  };
+  syncSubjectHash();
+  bindSubjectTabs(true);
+  reader.loaded=loadHtmlReaderIndex().then(manifest=>{
+    if(reader.controller.signal.aborted)return;
+    const chapterIndex=new Map();
+    items.forEach((entry,index)=>{
+      for(const [label,caption] of Object.entries(manifest[entry.id]?.labels||{}))chapterIndex.set(label,{index,caption});
+    });
+    return Promise.all(items.map((entry,index)=>mountCourseHtml(reader,panels[index],entry,index,manifest,chapterIndex)));
+  }).catch(error=>{
+    if(reader.controller.signal.aborted)return;
+    console.warn('[course HTML]',error);
+    for(const status of root.querySelectorAll('.course-html-status'))status.textContent='HTML не загрузился. Можно открыть PDF.';
+  });
+}
+function bindSubjectTabs(scrollToTabs=false){
+  main.querySelectorAll('.tab').forEach(button=>button.onclick=()=>{
+    if(state.section===button.dataset.section)return;
+    state.section=button.dataset.section;
+    state.selected=null;
+    state.selectedEntry=null;
+    renderSubject();
+    if(scrollToTabs)main.querySelector('#subjectTabs')?.scrollIntoView({block:'start'});
+  });
+}
+function renderSubject(){
   if(state.subject==='База'){
+    stopCourseReader();
     const selected=state.selected;state.selected=null;state.selectedEntry=null;
     renderKnowledge();
     if(selected&&subjectOf(selected)==='База')location.href=isReaderFile(selected)?notebookUrl(selected):selected.ext==='.pdf'?viewerUrl(selected):githubUrl(selected);
@@ -1005,6 +1085,11 @@ function renderSubject(htmlAnchor){
   const firstSection=sectionsFor(state.subject)[0]||'';
   if(!state.section)state.section=firstSection;
   const group=structuredGroup(state.subject,state.section);
+  if(readingFormat==='html'&&group?.items.some(item=>item.source?.includes('/LaTeX/parts/'))){
+    renderCourseReader(group,group.items.slice().sort((a,b)=>a.number-b.number));
+    return;
+  }
+  stopCourseReader();
   const files=filesFor(state.subject,state.section);
   let listHtml='',count=0,listTitle='Список материалов',previewFile=null;
 
@@ -1024,37 +1109,26 @@ function renderSubject(htmlAnchor){
     listHtml=fileRows(files);
   }
 
-  const htmlEntry=readingFormat==='html'&&state.selectedEntry?.source?.includes('/LaTeX/parts/')?state.selectedEntry:null;
-  const workspace=main.querySelector('.workspace');
-  const reuseWorkspace=workspace&&workspace.classList.contains('html-workspace')===Boolean(htmlEntry);
-  const previousHtml=main.querySelector('.course-html-panel article');
-  if(previousHtml)window.MathJax?.typesetClear?.([previousHtml]);
   const listTitleHtml=esc(listTitle)+' <span class="panel-count">'+count+'</span>';
-  if(reuseWorkspace){
+  if(main.querySelector('.workspace')){
     main.querySelector('.hero').outerHTML=hero(state.subject);
     main.querySelector('#subjectTabs').innerHTML=tabs(state.subject);
     main.querySelector('.list-panel .panel-title').innerHTML=listTitleHtml;
     main.querySelector('.list-panel .file-list').innerHTML=listHtml;
-    if(htmlEntry)workspace.querySelector('.course-html-panel').outerHTML=courseHtmlPanel(previewFile,htmlEntry);
-    else patchPreviewHtml(main.querySelector('.preview-panel'),preview(previewFile,state.selectedEntry));
+    patchPreviewHtml(main.querySelector('.preview-panel'),preview(previewFile,state.selectedEntry));
   }else main.innerHTML=hero(state.subject)+
     '<div id="subjectTabs">'+tabs(state.subject)+'</div>'+
-    '<div class="workspace'+(htmlEntry?' html-workspace':'')+'"><div class="subject-list-col"><section class="panel list-panel"><div class="panel-head"><h2 class="panel-title">'+esc(listTitle)+' <span class="panel-count">'+count+'</span></h2><select id="sortSelect" class="sort-select"><option value="date">По порядку</option><option value="name">По названию</option></select></div><div class="file-list">'+listHtml+'</div></section></div>'+(htmlEntry?courseHtmlPanel(previewFile,htmlEntry):'<div class="workspace-resizer" role="separator" aria-orientation="vertical" title="Потяните, чтобы изменить ширину списка"></div>'+preview(previewFile,state.selectedEntry))+'</div>';
+    '<div class="workspace"><div class="subject-list-col"><section class="panel list-panel"><div class="panel-head"><h2 class="panel-title">'+esc(listTitle)+' <span class="panel-count">'+count+'</span></h2><select id="sortSelect" class="sort-select"><option value="date">По порядку</option><option value="name">По названию</option></select></div><div class="file-list">'+listHtml+'</div></section></div><div class="workspace-resizer" role="separator" aria-orientation="vertical" title="Потяните, чтобы изменить ширину списка"></div>'+preview(previewFile,state.selectedEntry)+'</div>';
 
   syncSubjectHash();
-  if(htmlEntry)void mountCourseHtml(main.querySelector('.course-html-panel'),htmlEntry,htmlAnchor);
-  else{bindPreviewTabs();bindWorkspaceResizer();bindPreviewHeight();}
+  bindPreviewTabs();
+  bindWorkspaceResizer();
+  bindPreviewHeight();
   const sort=$('#sortSelect');if(sort){sort.value=state.sort;sort.onchange=()=>{state.sort=sort.value;renderSubject()}}
-  $$('.tab').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.selected=null;state.selectedEntry=null;renderSubject()});
+  bindSubjectTabs();
   $$('.file-row[data-entry]').forEach(r=>r.onclick=()=>{
     const item=(group?.items||[]).find(i=>i.id===r.dataset.entry);if(!item)return;
     state.selectedEntry=item;
-    if(readingFormat==='html'&&item.source?.includes('/LaTeX/parts/')){
-      recordOpenedFile(previewFile);
-      renderSubject();
-      main.querySelector('.course-html-panel')?.scrollIntoView({block:'start'});
-      return;
-    }
     if(isPhoneLayout()&&previewFile?.ext==='.pdf'){openPdfFullscreen(viewerUrl(previewFile,item.page||0,item.title),item.title);return}
     recordOpenedFile(previewFile);
     renderSubject();
@@ -1312,6 +1386,7 @@ function renderSearchResults(q){
   bindSearchUi(q);
 }
 async function runSearch(q){
+  stopCourseReader();
   q=(q||'').trim();
   const previous=searchQuery,run=++searchRun;searchQuery=q;
   if(searchNorm(previous)!==searchNorm(q)){searchFilterSubject='all';searchFilterSection='all';searchSelectedGroup=0;searchSelectedHit=0;searchMobilePreview=false}
@@ -1369,6 +1444,7 @@ function renderLiterature(){
 }
 
 function render(){
+  if(state.view!=='subjects')stopCourseReader();
   if(state.view==='home')renderHome();
   else if(state.view==='subjects')renderSubject();
   else if(state.view==='search')runSearch(searchInput.value);
@@ -1628,7 +1704,7 @@ else{state.view='home';setActiveNav('home')}
   // (Лекции, Семинары, …, Литература) and Литература / Доп. литература. Strips that scroll sideways
   // themselves (the tab bar, inputs, the preview) keep their gestures.
   let swipe=null;
-  const own='.tabs,.literature-tabs,input,textarea,select,iframe,.workspace-resizer,.preview-panel,pre,table';
+  const own='.tabs,.literature-tabs,input,textarea,select,iframe,.workspace-resizer,.preview-panel,.course-html-text,pre,table';
   main.addEventListener('touchstart',event=>{
     if(!isPhoneLayout()||event.touches.length!==1||event.target.closest(own)){swipe=null;return}
     const t=event.touches[0];swipe={x:t.clientX,y:t.clientY,time:event.timeStamp};
@@ -1646,7 +1722,7 @@ else{state.view='home';setActiveNav('home')}
     next.click();
     // The tabs are drawn anew: bring the active one into view and slide the content in from the swipe side.
     main.querySelector('.tabs .tab.active')?.scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'});
-    const content=main.querySelector('.workspace, .links-panel, .filtered-list');
+    const content=main.querySelector('.workspace, .course-reader, .links-panel, .filtered-list');
     if(content){content.classList.remove('swipe-next','swipe-prev');void content.offsetWidth;content.classList.add(dx<0?'swipe-next':'swipe-prev')}
   });
 })();

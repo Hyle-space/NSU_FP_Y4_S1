@@ -462,14 +462,14 @@
       }
     };
     const baseRenderSubject=renderSubject;
-    renderSubject=function(htmlAnchor){
+    renderSubject=function(){
       const subject=state.subject;
       if(subject!=='База'&&!linkState.has(subject))void probe(subject).then(found=>{if(found&&state.view==='subjects'&&state.subject===subject)renderSubject()});
       if(state.section==='Ссылки'){
         if(linkState.get(subject)===true){renderSubjectLinks();return}
         if(linkState.has(subject))state.section='';
       }
-      return baseRenderSubject(htmlAnchor);
+      return baseRenderSubject();
     };
     if(state.view==='subjects'&&state.subject!=='База'){
       const subject=state.subject;void probe(subject).then(found=>{if(found&&state.view==='subjects'&&state.subject===subject)renderSubject()});

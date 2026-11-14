@@ -53,7 +53,6 @@ TIKZ_PREAMBLE = r'''
 decorations.markings,bending,decorations.pathmorphing,perspective,shadings,shapes.arrows}
 \usepgfplotslibrary{colormaps,patchplots,fillbetween,groupplots}
 \input{style/colors}
-\pagecolor{rbg}
 \color{rtext}
 '''
 
@@ -102,6 +101,7 @@ def lesson(out, group, item):
     text = COMMENT.sub('', source.read_text(encoding='utf-8'))
     body = text.split(r'\begin{document}', 1)[1].rsplit(r'\end{document}', 1)[0]
     pictures = list(PICTURE.finditer(body))
+    diagrams = {}
     with tempfile.TemporaryDirectory() as tmp:
         temp = Path(tmp)
         if pictures:
@@ -113,15 +113,21 @@ def lesson(out, group, item):
                            + '\n' + r'\end{document}', encoding='utf-8')
             run(['xelatex', '-no-shell-escape', '-halt-on-error', '-interaction=nonstopmode',
                  '-output-directory=' + tmp, str(tex)], base)
-            run(['pdftocairo', '-png', '-r', '150', str(temp / 'diagrams.pdf'), str(temp / 'diagram')], base)
-            pages = sorted(temp.glob('diagram-*.png'), key=lambda file: int(file.stem.split('-')[-1]))
-            if len(pages) != len(pictures):
-                raise RuntimeError(f'{source}: expected {len(pictures)} diagrams, built {len(pages)}')
-            for n, (picture, page) in reversed(list(enumerate(zip(pictures, pages), 1))):
-                name = f'diagram-{n}.png'
-                shutil.copyfile(page, dest / name)
-                replacement = '\n\n' + r'\includegraphics{' + name + '}\n\n'
-                body = body[:picture.start()] + replacement + body[picture.end():]
+            pdf = temp / 'diagrams.pdf'
+            pages = re.search(r'^Pages:\s+(\d+)', run(['pdfinfo', str(pdf)], base), re.M)
+            if not pages or int(pages[1]) != len(pictures):
+                raise RuntimeError(f'{source}: unexpected PDF page count for {len(pictures)} diagrams')
+            for n, picture in reversed(list(enumerate(pictures, 1))):
+                file = temp / f'diagram-{n}.svg'
+                run(['pdftocairo', '-f', str(n), '-l', str(n), '-svg', str(pdf), str(file)], base)
+                svg = file.read_text(encoding='utf-8')
+                svg = svg[svg.index('<svg'):]
+                prefix = f'diagram-{item["number"]}-{n}-'
+                svg = re.sub(r'(id="|href="#|url\(#)([\w.-]+)', lambda m: m[1] + prefix + m[2], svg)
+                svg = svg.replace('<svg ', '<svg role="img" aria-label="Схема из конспекта" ', 1)
+                placeholder = f'HYLETIKZFIGURE{n}END'
+                diagrams[placeholder] = svg
+                body = body[:picture.start()] + '\n\n' + placeholder + '\n\n' + body[picture.end():]
 
         for setup in reversed(list(tikz_setups(body))):
             body = body.replace(setup, '', 1)
@@ -169,6 +175,10 @@ def lesson(out, group, item):
             r'(<span\s+class="math display">)(.*?)(</span>)',
             add_equation_anchor, fragment, flags=re.S
         )
+        for placeholder, svg in diagrams.items():
+            if fragment.count(placeholder) != 1:
+                raise RuntimeError(f'{source}: diagram placeholder {placeholder} missing')
+            fragment = fragment.replace(placeholder, '<span class="course-vector">' + svg + '</span>')
         # Give the reader an anchor even when Pandoc does not attach a label to its heading.
         (dest / 'index.html').write_text(fragment, encoding='utf-8')
     labels = {}

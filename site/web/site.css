@@ -1161,28 +1161,44 @@ body{
 @media(prefers-reduced-motion:reduce){.swipe-next,.swipe-prev{animation:none}}
 
 
-/* The HTML reader is part of the subject's normal scroll. */
-.workspace.html-workspace{display:grid;grid-template-columns:minmax(0,1fr);align-items:start}
-.html-workspace .subject-list-col{padding-right:0}
-.html-workspace .file-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:6px}
-.course-html-panel{min-width:0;scroll-margin-top:76px;padding:clamp(16px,3vw,36px)}
-.course-html-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-.course-html-head h2{margin:0;font-size:clamp(20px,3vw,28px)}
-.course-html-head a{text-decoration:none;white-space:nowrap}
-.course-html-toc{max-width:76ch;border:1px solid var(--line);border-radius:10px;margin:0 auto 20px;padding:10px 14px}
-.course-html-toc summary{cursor:pointer;font-weight:650}
-.course-html-toc ul{padding:0;margin:8px 0 0;list-style:none;max-height:36vh;overflow:auto}
+/* Continuous course reading uses the subject page's existing scroll. */
+#subjectTabs,.course-chapter{scroll-margin-top:76px}
+.course-reader{max-width:850px;margin:16px auto 0}
+.course-reader-toc,.course-chapter{border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.course-chapter{margin:16px 0 0;min-width:0}
+.course-chapter-head{
+  position:relative;isolation:isolate;overflow:hidden;border-radius:13px 13px 0 0;
+  padding:clamp(16px,4vw,32px) clamp(14px,4vw,36px);border-bottom:1px solid var(--line);
+  background:linear-gradient(110deg,var(--soft),transparent 75%);color:var(--cream)
+}
+.course-chapter-head::before{
+  content:"";position:absolute;inset:0 0 0 52%;z-index:-1;
+  background-image:radial-gradient(circle,var(--accent) 1px,transparent 1.4px);
+  background-size:9px 9px;opacity:.35;mask-image:linear-gradient(to right,transparent,black)
+}
+.course-chapter-head h2{margin:12px 0 0;font-size:clamp(23px,4.2vw,36px);line-height:1.12;overflow-wrap:anywhere}
+.course-chapter-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--warm);font-weight:650}
+.course-chapter-meta a{color:var(--cream);border:1px solid var(--line2);background:var(--bg);border-radius:7px;padding:5px 9px;text-decoration:none}
+.course-html-toc{padding:10px 16px}
+.course-html-toc summary{cursor:pointer;font-weight:650;padding:5px 0}
+.course-html-toc :is(ol,ul){margin:8px 0;padding-inline-start:24px}
+.course-html-toc ul{list-style:none;padding-inline-start:0;max-height:38vh;overflow:auto}
 .course-html-toc li[data-level="3"]{padding-inline-start:12px}
 .course-html-toc li[data-level="4"]{padding-inline-start:24px}
 .course-html-toc button{border:0;background:none;color:inherit;text-align:left;font:inherit;cursor:pointer;padding:7px 4px}
 .course-html-toc button:hover,.course-html-text a{color:var(--accent)}
-.course-html-text{max-width:76ch;margin:0 auto;font-family:system-ui,sans-serif;font-size:clamp(15px,2vw,17px);line-height:1.7;overflow-wrap:anywhere}
+.course-chapter-toc{margin:12px clamp(14px,4vw,36px) 0;padding:0 0 8px;border-bottom:1px solid var(--line);color:var(--muted)}
+.course-html-text{padding:8px clamp(14px,4vw,36px) 24px;font-family:system-ui,sans-serif;font-size:clamp(15px,2vw,17px);line-height:1.7;overflow-wrap:anywhere}
 .course-html-text :is(h1,h2,h3,h4,[id]){scroll-margin-top:78px}
 .course-html-text h1{font-size:1.4em}
-.course-html-text img{max-width:100%;height:auto;display:block;margin:12px auto;border-radius:8px}
+.course-html-text h2{font-size:1.3em}
+.course-html-text h3{font-size:1.13em}
+.course-html-text img,.course-vector svg{display:block;max-width:100%;height:auto;margin-inline:auto}
+.course-html-text img{margin-block:12px;border-radius:8px}
+.course-vector{display:block;margin-block:16px}
 .course-html-text .math.display,.course-html-text mjx-container[display="true"]{max-width:100%;overflow:auto;overflow-y:hidden}
 .course-html-text .math.display{display:block;padding-block:3px}
 .course-html-text table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}
 .course-html-text :is(th,td){border:1px solid var(--line);padding:4px 8px}
-.course-html-status{color:var(--muted)}
+.course-html-status{color:var(--muted);padding:12px clamp(14px,4vw,36px)}
 .app-reading-format{display:flex;align-items:center;justify-content:space-between;gap:12px}
